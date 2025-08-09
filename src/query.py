@@ -1,31 +1,64 @@
 # src/query.py
 import os
 from dotenv import load_dotenv
-from langchain import OpenAI
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
+import google.generativeai as genai
 import chromadb
-from chromadb.config import Settings
+from chromadb import PersistentClient
 from openai import OpenAI
+import numpy as np
 
+load_dotenv()
 
-
-load_dotenv
-
-OPENAI_API_KEY = os.getenv("APIKEY")
+OPENAI_API_KEY = os.getenv("APIKEY")  # For OpenRouter
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")  # For Gemini embeddings
 CHROMA_DIR = "./chroma_db"
+EMBED_MODEL = "gemini-embedding-001"
+EMBED_DIMENSIONS = 768
 
-client = OpenAI(
+# OpenRouter client for LLM responses
+openai_client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENAI_API_KEY
 )
 
-# Simple retriever against Chroma
+# Gemini configuration
+genai.configure(api_key=GOOGLE_API_KEY)
+
+def get_query_embedding(query_text):
+    """Generate embedding for a query using Gemini"""
+    try:
+        result = genai.embed_content(
+            model=EMBED_MODEL,
+            content=query_text,
+            task_type="retrieval_query"
+        )
+        
+        # Get the embedding and normalize it
+        embedding_values = np.array(result['embedding'])
+        normalized_embedding = embedding_values / np.linalg.norm(embedding_values)
+        return normalized_embedding.tolist()
+        
+    except Exception as e:
+        print(f"Error generating query embedding: {e}")
+        return None
+
 def get_top_k(query, k=4):
-    client = chromadb.Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory=CHROMA_DIR))
+    """Retrieve top-k similar documents using Gemini embeddings"""
+    # Get query embedding
+    query_embedding = get_query_embedding(query)
+    if query_embedding is None:
+        return []
+    
+    # Query ChromaDB with the embedding
+    client = PersistentClient(path=CHROMA_DIR)
     col = client.get_collection("human_services")
-    results = col.query(query_texts=[query], n_results=k)
-    # results["documents"], results["metadatas"], results["distances"]
+    
+    results = col.query(
+        query_embeddings=[query_embedding], 
+        n_results=k
+    )
+    
+    # Format results
     docs = []
     for i in range(len(results["documents"][0])):
         docs.append({
@@ -36,7 +69,8 @@ def get_top_k(query, k=4):
     return docs
 
 def query_openrouter(messages, model="deepseek/deepseek-r1-0528-qwen3-8b:free"):
-    completion = client.chat.completions.create(
+    """Query OpenRouter for LLM response"""
+    completion = openai_client.chat.completions.create(
         model=model,
         messages=messages,
         extra_headers={
@@ -47,9 +81,15 @@ def query_openrouter(messages, model="deepseek/deepseek-r1-0528-qwen3-8b:free"):
     return completion.choices[0].message.content
 
 def answer_question(question, k=4):
+    """Answer a question using RAG with Gemini embeddings and OpenRouter LLM"""
     docs = get_top_k(question, k=k)
+    
+    if not docs:
+        return "Sorry, I couldn't retrieve relevant documents to answer your question."
+    
     context = "\n\n".join([
-        f"[Source: {d['meta'].get('source')} p.{d['meta'].get('page')}]\n{d['text']}" for d in docs
+        f"[Source: {d['meta'].get('source')} p.{d['meta'].get('page')}]\n{d['text']}" 
+        for d in docs
     ])
 
     system_message = (
