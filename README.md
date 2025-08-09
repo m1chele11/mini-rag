@@ -1,7 +1,7 @@
 # 🧠 Mini Retrieval-Augmented Generation (Mini-RAG) Prototype
 
 > A hands-on project to build a simple RAG system using LangChain, ChromaDB, and Google Gemini embeddings.
-> Designed for learning and demo purposes — no paid OpenAI API needed! 🚀
+> Designed for learning and demo purposes, no paid OpenAI API needed! 🚀
 
 ---
 
